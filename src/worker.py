@@ -1,24 +1,26 @@
-"""Worker loop: paginated, idempotent, audit-logged.
+"""Worker loop: paginated, idempotent, audit-logged, with a bounded AI layer.
 
 Pulls pages of `pending` transactions (keyset pagination on the
-idx_transactions_status_scheduled index), runs the deterministic rule engine, mock-
-executes the resulting action, and writes — per row — the decision + an audit row +
-the status update as ONE atomic statement (CLAUDE.md Rules 4, 6, 7).
+idx_transactions_status_scheduled index), runs the deterministic rule engine, adds
+bounded AI enrichment where allowed (re-auth message text, unmapped-code bucket
+suggestion), mock-executes the resulting action, and writes — per row — the decision
++ an audit row + the status update as ONE atomic statement (CLAUDE.md Rules 4, 6, 7).
 
-Atomicity + idempotency: each row's three writes are a single CTE statement. The
-INSERT into agent_decisions is `ON CONFLICT (transaction_id) DO NOTHING`; the audit
-insert and the status update only fire when that insert actually happened. So the
-statement is a no-op on a transaction that already has a decision — re-running the
-worker, or a mid-batch crash + restart, never double-processes or double-counts.
+The AI never changes the routing decision (CLAUDE.md Rule 1). A timeout / error /
+missing key degrades to the conservative fallback, recorded in the audit snapshot;
+the pipeline never hangs on it (CLAUDE.md Rule 2).
 
-Performance: a page's rows are written with one `executemany` (psycopg pipelines it),
-turning ~200 network round-trips into ~1. If that batch raises, the page is retried
-row-by-row to isolate the bad rows and feed the circuit breaker.
+Atomicity + idempotency: each row's three writes are one CTE statement. The decision
+insert is `ON CONFLICT (transaction_id) DO NOTHING`; the audit insert and status
+update only fire when that insert happened. So the statement is a no-op on a
+transaction that already has a decision — re-running, or a mid-batch crash + restart,
+never double-processes or double-counts.
 """
 
 import json
 import math
 import pathlib
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -26,9 +28,10 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from src.config import CIRCUIT_BREAKER_THRESHOLD, PAGE_SIZE
+from src.ai import AIClient, AIResult, fallback_message
+from src.config import AI_MAX_CONCURRENCY, AI_TIMEOUT_SECONDS, CIRCUIT_BREAKER_THRESHOLD, DECLINE_CODE_BUCKETS, PAGE_SIZE
 from src.db import get_dsn
-from src.executor import RetrySimulation, simulate_retry_schedule
+from src.executor import simulate_retry_schedule
 from src.rules import (
     ACTION_ESCALATED,
     ACTION_REAUTH_LINK_SENT,
@@ -41,12 +44,11 @@ from src.rules import (
 
 PROGRESS_FILE = pathlib.Path(__file__).resolve().parent.parent / "worker_progress.json"
 
-# Minimum errors on a page before the circuit breaker can trip — stops a tiny final
-# page (e.g. 3 rows, 1 error) tripping it on proportion alone.
 CIRCUIT_BREAKER_MIN_ERRORS = 5
+_PAGE_AI_DEADLINE = AI_TIMEOUT_SECONDS + 3  # hard cap on a page's whole AI phase
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
-_ZERO_UUID = "00000000-0000-0000-0000-000000000000"  # keyset cursor start
+_ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 
 PAGE_QUERY = """
 SELECT t.transaction_id, t.amount, t.attempt_count, t.scheduled_at,
@@ -70,13 +72,11 @@ ORDER BY t.scheduled_at, t.transaction_id
 LIMIT %s
 """
 
-# One atomic statement: decision (idempotent) -> audit (only if decision inserted)
-# -> status update (only if decision inserted and row still pending).
 WRITE_ROW = """
 WITH dec AS (
     INSERT INTO agent_decisions
         (transaction_id, rule_fired, action_taken, reasoning_source, next_action_at)
-    VALUES (%(txn)s, %(rule)s, %(action)s, 'deterministic_rule', %(next_at)s)
+    VALUES (%(txn)s, %(rule)s, %(action)s, %(reasoning)s, %(next_at)s)
     ON CONFLICT (transaction_id) DO NOTHING
     RETURNING 1
 ),
@@ -95,8 +95,8 @@ WHERE transaction_id = %(txn)s
 
 
 class CircuitBreakerTripped(RuntimeError):
-    """Raised when too many rows on one page error out — the worker stops instead of
-    chewing through a bad batch (DECISION_RULES.md Step 4)."""
+    """Too many rows on one page errored — the worker stops instead of chewing
+    through a bad batch (DECISION_RULES.md Step 4)."""
 
 
 @dataclass
@@ -109,6 +109,9 @@ class WorkerRun:
     errors: int = 0
     error_ids: list[str] = field(default_factory=list)
     recovered_paise: int = 0
+    ai_messages: int = 0        # re-auth messages actually drafted by the model
+    ai_classifications: int = 0  # unmapped codes the model returned a bucket for
+    ai_fallbacks: int = 0        # AI tasks that fell back to a template / default
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def as_progress(self, total_pages: int | None, running: bool) -> dict:
@@ -124,20 +127,33 @@ class WorkerRun:
             "escalated": self.escalated,
             "errors": self.errors,
             "recovered_paise": self.recovered_paise,
+            "ai_messages": self.ai_messages,
+            "ai_classifications": self.ai_classifications,
+            "ai_fallbacks": self.ai_fallbacks,
         }
 
 
-# ── planning: rule engine + mock execution, no DB ────────────────────────────
-@dataclass(frozen=True)
+# ── planning: rule engine + mock execution (deterministic, no DB, no AI) ──────
+@dataclass
 class RowPlan:
-    transaction_id: str
+    transaction_id: object
     amount: int
-    final_status: str        # transactions.status enum after this decision
-    params: dict             # bound parameters for WRITE_ROW
+    final_status: str
+    attempt_count_after: int
+    action: str
+    rule_fired: str
+    next_action_at: datetime | None
+    reasoning_source: str
+    snapshot: dict
+    ai_task: str | None          # "classify" | "message" | None
+    ai_context: dict
+
+
+def _is_unmapped(decline_code: str | None) -> bool:
+    return bool(decline_code) and decline_code.strip() not in DECLINE_CODE_BUCKETS
 
 
 def _resolve_outcome(action: str, bucket: str, transaction_id: str, attempt_count: int):
-    """Return (final_status, attempt_count_after, outcome_label, RetrySimulation|None)."""
     if action == ACTION_RETRY_SCHEDULED:
         sim = simulate_retry_schedule(
             transaction_id=transaction_id, bucket=bucket, attempt_count=attempt_count
@@ -145,19 +161,15 @@ def _resolve_outcome(action: str, bucket: str, transaction_id: str, attempt_coun
         if sim.recovered:
             return "recovered", sim.final_attempt_count, "recovered_on_retry", sim
         return "halted", sim.final_attempt_count, "retries_exhausted", sim
-
     if action == ACTION_ESCALATED:
         return "escalated", attempt_count, "escalated_to_human", None
-
-    # reauth_link_sent / stopped_permanent: automated recovery stops here. The DB
-    # enum has no "waiting on customer" state, so both land on 'halted' — the
-    # specific reason is in agent_decisions.rule_fired.
     label = "reauth_link_sent" if action == ACTION_REAUTH_LINK_SENT else "stopped_permanent"
     return "halted", attempt_count, label, None
 
 
 def plan_row(row: dict) -> RowPlan:
     decline_code = row["decline_code"]
+    unmapped = _is_unmapped(decline_code)
     bucket = classify(decline_code)
     afa_check = check_afa_threshold(row["amount"], row["mandate_category"])
     decision = decide_action(
@@ -172,16 +184,35 @@ def plan_row(row: dict) -> RowPlan:
     if decision.action == ACTION_RETRY_SCHEDULED and decision.retry_after is not None:
         next_action_at = row["scheduled_at"] + decision.retry_after
 
+    ai_context = {
+        "decline_code": decline_code,
+        "amount": row["amount"],
+        "mandate_category": row["mandate_category"],
+        "rule_fired": decision.rule_fired,
+        "bucket": bucket,
+    }
+
+    if unmapped:
+        ai_task = "classify"
+        reasoning_source = "ai_fallback"  # upgraded to ai_classifier if the model answers
+    elif decision.action == ACTION_REAUTH_LINK_SENT:
+        ai_task = "message"
+        reasoning_source = "deterministic_rule"
+    else:
+        ai_task = None
+        reasoning_source = "deterministic_rule"
+
     snapshot = {
         "transaction_id": str(row["transaction_id"]),
         "amount_paise": row["amount"],
         "mandate_category": row["mandate_category"],
         "decline_code": decline_code,
+        "decline_code_mapped": not unmapped,
         "bucket": bucket,
         "afa_check": afa_check,
         "rule_fired": decision.rule_fired,
         "action_taken": decision.action,
-        "reasoning_source": "deterministic_rule",
+        "reasoning_source": reasoning_source,
         "attempt_count_before": row["attempt_count"],
         "attempt_count_after": attempts_after,
         "retry_simulation": (
@@ -190,33 +221,112 @@ def plan_row(row: dict) -> RowPlan:
         "status_before": "pending",
         "status_after": status,
         "outcome": label,
+        "ai_bucket_suggestion": None,
+        "customer_message": None,
+        "message_source": "none",
+        "ai_status": "not_needed" if ai_task is None else "pending",
         "decided_at": datetime.now(timezone.utc).isoformat(),
     }
 
     return RowPlan(
-        transaction_id=str(row["transaction_id"]),
+        transaction_id=row["transaction_id"],
         amount=row["amount"],
         final_status=status,
-        params={
-            "txn": row["transaction_id"],
-            "rule": decision.rule_fired,
-            "action": decision.action,
-            "next_at": next_action_at,
-            "snapshot": Jsonb(snapshot),
-            "status": status,
-            "attempts": attempts_after,
-        },
+        attempt_count_after=attempts_after,
+        action=decision.action,
+        rule_fired=decision.rule_fired,
+        next_action_at=next_action_at,
+        reasoning_source=reasoning_source,
+        snapshot=snapshot,
+        ai_task=ai_task,
+        ai_context=ai_context,
     )
 
 
-# ── writing: batched, with a row-by-row fallback ─────────────────────────────
+# ── AI enrichment (bounded, concurrent, fallback-safe) ───────────────────────
+def _merge_ai(plan: RowPlan, res: AIResult, run: WorkerRun) -> None:
+    plan.snapshot["ai_status"] = res.status
+    if plan.ai_task == "classify":
+        plan.snapshot["ai_bucket_suggestion"] = res.value
+        if res.ok:
+            plan.reasoning_source = "ai_classifier"
+            run.ai_classifications += 1
+        else:
+            plan.reasoning_source = "ai_fallback"
+            run.ai_fallbacks += 1
+        plan.snapshot["reasoning_source"] = plan.reasoning_source
+        # Routing is unchanged: unmapped code stays compliance -> escalated.
+    else:  # message
+        if res.ok and res.value:
+            plan.snapshot["customer_message"] = res.value
+            plan.snapshot["message_source"] = "ai"
+            run.ai_messages += 1
+        else:
+            plan.snapshot["customer_message"] = fallback_message(plan.rule_fired, plan.ai_context)
+            plan.snapshot["message_source"] = "fallback"
+            run.ai_fallbacks += 1
+
+
+def apply_ai(plans: list[RowPlan], ai: AIClient, run: WorkerRun) -> None:
+    tasks = [p for p in plans if p.ai_task]
+    if not tasks:
+        return
+
+    def call(p: RowPlan) -> AIResult:
+        if p.ai_task == "classify":
+            return ai.classify_decline_code(p.ai_context["decline_code"], p.ai_context)
+        return ai.draft_reauth_message(p.ai_context)
+
+    # No key -> every call returns instantly; skip the thread pool.
+    if not ai.enabled:
+        for p in tasks:
+            _merge_ai(p, call(p), run)
+        return
+
+    # Not a `with` block: we must not wait on stragglers at shutdown. A call that
+    # overruns the page deadline is abandoned here and finishes (or times out on the
+    # SDK's own 8s HTTP cap) harmlessly in the background.
+    ex = ThreadPoolExecutor(max_workers=AI_MAX_CONCURRENCY)
+    futs = {ex.submit(call, p): p for p in tasks}
+    pending = set(futs)
+    try:
+        for fut in as_completed(futs, timeout=_PAGE_AI_DEADLINE):
+            pending.discard(fut)
+            p = futs[fut]
+            try:
+                res = fut.result()
+            except Exception as exc:  # noqa: BLE001
+                res = AIResult(False, None, f"error:{type(exc).__name__}")
+            _merge_ai(p, res, run)
+    except FuturesTimeout:
+        pass
+    finally:
+        for fut in pending:
+            fut.cancel()
+            _merge_ai(futs[fut], AIResult(False, None, "timeout"), run)
+        ex.shutdown(wait=False, cancel_futures=True)
+
+
+# ── writing: batched, with a row-by-row fallback ────────────────────────────
+def _params(p: RowPlan) -> dict:
+    return {
+        "txn": p.transaction_id,
+        "rule": p.rule_fired,
+        "action": p.action,
+        "reasoning": p.reasoning_source,
+        "next_at": p.next_action_at,
+        "snapshot": Jsonb(p.snapshot),
+        "status": p.final_status,
+        "attempts": p.attempt_count_after,
+    }
+
+
 def write_page(conn: psycopg.Connection, plans: list[RowPlan]) -> dict[str, Exception]:
-    """Write every plan. Returns {transaction_id: exception} for rows that failed."""
     if not plans:
         return {}
     try:
         with conn.cursor() as cur:
-            cur.executemany(WRITE_ROW, [p.params for p in plans])
+            cur.executemany(WRITE_ROW, [_params(p) for p in plans])
         return {}
     except Exception as batch_exc:  # noqa: BLE001
         print(f"  batch write failed ({batch_exc!r}); retrying page row-by-row")
@@ -224,13 +334,13 @@ def write_page(conn: psycopg.Connection, plans: list[RowPlan]) -> dict[str, Exce
         for p in plans:
             try:
                 with conn.cursor() as cur:
-                    cur.execute(WRITE_ROW, p.params)  # idempotent — safe to repeat
+                    cur.execute(WRITE_ROW, _params(p))  # idempotent — safe to repeat
             except Exception as row_exc:  # noqa: BLE001
-                errors[p.transaction_id] = row_exc
+                errors[str(p.transaction_id)] = row_exc
         return errors
 
 
-# ── page loop ────────────────────────────────────────────────────────────────
+# ── page loop ───────────────────────────────────────────────────────────────
 def _estimate_total_pages(conn: psycopg.Connection, page_size: int) -> int:
     with conn.cursor() as cur:
         cur.execute(
@@ -248,13 +358,18 @@ def run(
     max_pages: int | None = None,
     circuit_breaker: bool = True,
     write_progress: bool = True,
+    ai: AIClient | None = None,
 ) -> WorkerRun:
+    ai = ai or AIClient()
     result = WorkerRun()
     conn = psycopg.connect(get_dsn())
-    conn.autocommit = True  # each WRITE_ROW statement is its own atomic transaction
+    conn.autocommit = True
     try:
         total_pages = _estimate_total_pages(conn, page_size)
-        print(f"worker: ~{total_pages} page(s) of pending transactions to process")
+        print(
+            f"worker: ~{total_pages} page(s) to process | AI: "
+            f"{'enabled' if ai.enabled else 'disabled (fallback only)'}"
+        )
 
         cursor_ts, cursor_id = _EPOCH, _ZERO_UUID
         while max_pages is None or result.pages < max_pages:
@@ -268,7 +383,8 @@ def run(
             cursor_ts, cursor_id = page[-1]["scheduled_at"], page[-1]["transaction_id"]
 
             plans = [plan_row(r) for r in page]
-            by_id = {p.transaction_id: p for p in plans}
+            apply_ai(plans, ai, result)
+            by_id = {str(p.transaction_id): p for p in plans}
             errors = write_page(conn, plans)
 
             for txn_id, plan in by_id.items():
@@ -289,7 +405,9 @@ def run(
             print(
                 f"  page {result.pages}/{total_pages or '?'}: {len(page)} rows | "
                 f"recovered {result.recovered} halted {result.halted} "
-                f"escalated {result.escalated} errors {result.errors}"
+                f"escalated {result.escalated} errors {result.errors} | "
+                f"ai_msg {result.ai_messages} ai_cls {result.ai_classifications} "
+                f"ai_fb {result.ai_fallbacks}"
             )
             if write_progress:
                 _write_progress(result, total_pages, running=True)

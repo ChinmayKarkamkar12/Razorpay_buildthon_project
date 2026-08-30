@@ -27,6 +27,13 @@ SEED_CHUNK_SIZE = 500               # seeder inserts in chunks of this many rows
 AI_TIMEOUT_SECONDS = 8
 CIRCUIT_BREAKER_THRESHOLD = 0.20     # pause worker if > 20% of a page errors
 
+# ── AI layer (bounded — see DECISION_RULES.md Step 5 / CLAUDE.md Rule 1) ───────
+# The LLM only (a) drafts customer-facing re-auth messages and (b) SUGGESTS a bucket
+# for a decline code missing from the taxonomy. It never decides an action, never
+# overrides the AFA check or a retry cap. Key comes from GEMINI_API_KEY env only.
+GEMINI_MODEL = "gemini-2.0-flash"
+AI_MAX_CONCURRENCY = 5              # cap on in-flight AI calls per page
+
 # ── Mock PSP retry outcome (simulation only — NOT a real payment rail) ─────────
 # Per-attempt probability that a scheduled retry succeeds at the mock gateway.
 # Reasoned engineering guesses for a demo, NOT sourced statistics — say so if asked.
