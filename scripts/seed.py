@@ -75,6 +75,12 @@ BUCKET_WEIGHTS = {
     "compliance": 10,
 }
 
+# A small slice of genuinely unknown codes on ACTIVE mandates. The rule engine must
+# route these to the conservative path (compliance -> escalated), and step 4's AI
+# classifier needs real unmapped codes to work against.
+UNKNOWN_CODE_RATE = 0.03
+UNKNOWN_CODES = ["XX99", "BANK_ERR_7734", "NPCI_UNLISTED", "RC-000", "PSP_TIMEOUT_X"]
+
 # Decline code forced onto a transaction whose mandate is not active.
 NON_ACTIVE_MANDATE_CODE = {"revoked": "mandate_cancelled", "paused": "mandate_expired"}
 
@@ -204,6 +210,9 @@ def build_transactions(mandates: list[dict], n: int) -> tuple[list[tuple], list[
         # Decline code must be consistent with the mandate's own state.
         if mandate["status"] != "active":
             code = NON_ACTIVE_MANDATE_CODE[mandate["status"]]
+            bucket = "compliance"
+        elif random.random() < UNKNOWN_CODE_RATE:
+            code = random.choice(UNKNOWN_CODES)   # unmapped -> engine treats as compliance
             bucket = "compliance"
         else:
             bucket = weighted_choice(BUCKET_WEIGHTS)

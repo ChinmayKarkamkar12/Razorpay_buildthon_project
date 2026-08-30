@@ -27,6 +27,13 @@ SEED_CHUNK_SIZE = 500               # seeder inserts in chunks of this many rows
 AI_TIMEOUT_SECONDS = 8
 CIRCUIT_BREAKER_THRESHOLD = 0.20     # pause worker if > 20% of a page errors
 
+# ── Mock PSP retry outcome (simulation only — NOT a real payment rail) ─────────
+# Per-attempt probability that a scheduled retry succeeds at the mock gateway.
+# Reasoned engineering guesses for a demo, NOT sourced statistics — say so if asked.
+#   soft:      customer may top up between attempts, but often does not
+#   technical: transient bank/network issue usually clears on a quick retry
+RETRY_SUCCESS_PROB = {"soft": 0.35, "technical": 0.65}
+
 # ── Decline code -> bucket taxonomy ────────────────────────────────────────────
 # Modeled on documented PSP/NPCI integration guides (NPCI's full circular is not
 # public). Any code NOT in this table maps to the most conservative bucket,

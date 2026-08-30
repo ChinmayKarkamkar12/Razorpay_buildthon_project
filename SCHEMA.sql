@@ -73,16 +73,17 @@ CREATE TYPE reasoning_source AS ENUM ('deterministic_rule', 'ai_classifier', 'ai
 
 CREATE TABLE agent_decisions (
     decision_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    transaction_id    UUID NOT NULL REFERENCES transactions(transaction_id),
+    transaction_id    UUID NOT NULL UNIQUE REFERENCES transactions(transaction_id),
+                                                  -- UNIQUE: one terminal decision per
+                                                  -- transaction. DB-enforced idempotency
+                                                  -- guard for the worker (CLAUDE.md Rule 4).
     rule_fired        TEXT NOT NULL,               -- e.g. 'afa_threshold_exceeded'
     action_taken      agent_action NOT NULL,
     reasoning_source  reasoning_source NOT NULL,
     next_action_at    TIMESTAMPTZ,
     decided_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX idx_agent_decisions_transaction
-    ON agent_decisions (transaction_id);
+-- The UNIQUE constraint above already creates an index on transaction_id.
 
 -- ─────────────────────────────────────────────
 -- audit_log  (append-only — never UPDATE/DELETE)
