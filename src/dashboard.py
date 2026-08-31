@@ -178,7 +178,8 @@ _RULE_PLAIN = {
     "afa_threshold_exceeded": "Amount is above the RBI limit for auto-debit, so the "
     "customer must re-approve it before any charge.",
     "compliance_decline_no_retry": "The mandate itself needs the customer to act "
-    "(expired / cancelled / re-authorisation required) — retrying would not help.",
+    "(expired / cancelled / re-authorisation required) — retrying would not help; "
+    "send a re-authorisation link.",
     "hard_decline_no_retry": "The bank gave a hard refusal (blocked card, wrong PIN, "
     "invalid account). Auto-retrying a hard decline is not allowed.",
     "soft_decline_scheduled_retry": "A soft decline (e.g. insufficient funds). Retry "
@@ -236,7 +237,12 @@ def humanize_decision(snapshot: dict) -> list[str]:
     elif afa == "AFA_NOT_REQUIRED":
         lines.append("AFA check: amount is within the RBI auto-debit limit.")
 
-    if rule:
+    if rule == "compliance_decline_no_retry" and action == "escalated":
+        lines.append(
+            "Rule applied: This decline is not in our taxonomy, so it is treated as "
+            "compliance and sent to a human — never auto-retried."
+        )
+    elif rule:
         lines.append(f"Rule applied: {_RULE_PLAIN.get(rule, rule)}")
 
     sim = s.get("retry_simulation")
