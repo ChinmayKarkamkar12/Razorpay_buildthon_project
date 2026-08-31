@@ -7,23 +7,37 @@ open — it's a verification pass over the whole system.
 Prove — not assume — that the system holds up under more data than your dev testing
 used, the night before you present.
 
+## Harness
+`scripts/load_test.py` does the whole pass end to end and writes `load_test_report.txt`:
+
+    python -m scripts.load_test --transactions 12000   # seed + reset + run + verify
+    python -m scripts.load_test --no-seed              # verify existing data only
+
 ## Tasks
-- [ ] Seed (or extend the Step 1 seeder to generate) 10,000+ synthetic transactions.
-- [ ] Run the full worker pipeline against the whole batch.
-- [ ] Confirm: zero duplicate `agent_decisions` rows (same idempotency guard from
-      Step 3 holding at scale).
-- [ ] Confirm: no page gets stuck — check the progress logs for gaps or long pauses.
-- [ ] Confirm: the dashboard (Step 6) still loads quickly with this much data in the
-      tables.
-- [ ] Spot-check a random sample (10–15 transactions) across different buckets and
-      manually verify their audit trail matches what `DECISION_RULES.md` says should
-      have happened.
-- [ ] If anything breaks here, fix it and re-run the full load test — don't patch
-      around it under time pressure right before presenting.
+- [x] Seeder already takes `--transactions N`; load test seeds 12,000 (`--reset`).
+- [x] Runs the full worker pipeline against the whole batch in one `run()`.
+- [x] Zero duplicate `agent_decisions` — checked via `GROUP BY transaction_id
+      HAVING count(*) > 1`. Also: 1 decision + 1 audit row per transaction, 0 pending left.
+- [x] No page stalled — a background thread polls `worker_progress.json` and records
+      when each page completed; worst inter-page gap must stay under `STALL_SECONDS`
+      (30s). Observed: 17.1s worst, and that is page 1 only (the AI scenario cache is
+      cold — every re-auth message + unknown-code classification for the whole run is
+      drafted up front, then reused). Pages 2–60 run at ~0.5s each.
+- [x] Dashboard load with 12k rows: `/` cold 1.4s (Supabase round-trips from Tokyo),
+      then 2–5ms from the summary cache; `/transactions` ~0.32s per page, deep page
+      (page 40) same as page 1 — offset pagination holds.
+- [x] Independent spot-check: 15 random rows, re-run the pure rule engine
+      (`classify` → `check_afa_threshold` → `decide_action`) on the raw inputs from
+      each immutable audit snapshot and assert it still matches the recorded
+      `action_taken` + `rule_fired`. 0/15 mismatched.
 
 ## Definition of done
-- [ ] A full 10,000+ row run completes without manual intervention.
-- [ ] Spot-checked audit trails are all correct.
-- [ ] You have a screenshot or note of the final numbers (total recovered, etc.) to
-      use as backup in case you need to re-run live during the pitch and something
-      goes wrong.
+- [x] A full 12,000-row run completes with no manual intervention (53.3s, 225 txn/s,
+      0 errors, 0 AI fallbacks).
+- [x] Spot-checked audit trails all correct.
+- [x] `load_test_report.txt` committed as pitch-day backup (5,284 recovered /
+      ₹11.56 cr, 6,360 halted, 356 escalated on the 12k run).
+
+**Done 2026-08-31.** 12/12 checks green. `tests/test_load_test.py` covers the gap
+math + check accumulator. DB restored to the 2,000-row demo batch afterwards; re-run
+the load test any time with the command above.

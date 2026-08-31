@@ -1,0 +1,27 @@
+RBI E-Mandate Recovery Coordinator — Step 7 load test
+run at: 2026-08-31T16:21:11.090406+00:00
+transactions:      12,000
+pages:             60  (page size 200)
+wall clock:        53.3s  (225 txn/s)
+worst page gap:    17.1s  (stall threshold 30s)
+
+processed:         12,000
+recovered:         5,284  (₹115,626,194.63)
+halted:            6,360
+escalated:         356
+errors:            0
+AI: 2957 messages, 356 classifications, 0 fallbacks
+
+checks: 12/12 passed
+  [PASS] worker completed without circuit-breaker trip
+  [PASS] no errored rows — 0 errors
+  [PASS] no page stalled — worst gap 17.1s
+  [PASS] all transactions seeded — 12000 in table
+  [PASS] no pending transactions left — 0 still pending
+  [PASS] one decision per transaction — 12000 decisions / 12000 txns
+  [PASS] one audit row per decision — 12000 audit rows
+  [PASS] zero duplicate agent_decisions — 0 duplicated ids
+  [PASS] every decision carries a rule
+  [PASS] status <-> action consistency
+  [PASS] every stop is traceable in audit_log
+  [PASS] spot-check: rule engine still matches recorded decisions — 0/15 mismatched
