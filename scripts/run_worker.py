@@ -19,6 +19,7 @@ def main() -> int:
     p.add_argument("--page-size", type=int, default=PAGE_SIZE)
     p.add_argument("--max-pages", type=int, default=None)
     p.add_argument("--no-circuit-breaker", action="store_true")
+    p.add_argument("--no-ai", action="store_true", help="Skip the AI layer (fallbacks only).")
     args = p.parse_args()
 
     try:
@@ -26,6 +27,7 @@ def main() -> int:
             page_size=args.page_size,
             max_pages=args.max_pages,
             circuit_breaker=not args.no_circuit_breaker,
+            use_ai=not args.no_ai,
         )
     except CircuitBreakerTripped as exc:
         print(f"\nCIRCUIT BREAKER: {exc}", file=sys.stderr)
@@ -35,6 +37,11 @@ def main() -> int:
         f"\ndone: {result.pages} page(s), {result.processed} processed | "
         f"recovered {result.recovered} (₹{result.recovered_paise / 100:,.2f}) | "
         f"halted {result.halted} | escalated {result.escalated} | errors {result.errors}"
+    )
+    print(
+        f"AI: {result.ai_messages} messages drafted, "
+        f"{result.ai_classifications} codes classified, "
+        f"{result.ai_fallbacks} fell back to templates/defaults"
     )
     if result.error_ids:
         print(f"errored transaction ids: {result.error_ids}")

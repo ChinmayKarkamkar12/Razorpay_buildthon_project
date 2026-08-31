@@ -28,8 +28,14 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from src.ai import AIClient, AIResult, fallback_message
-from src.config import AI_MAX_CONCURRENCY, AI_TIMEOUT_SECONDS, CIRCUIT_BREAKER_THRESHOLD, DECLINE_CODE_BUCKETS, PAGE_SIZE
+from src.ai import AMOUNT_TOKEN, AIClient, AIResult, fallback_message
+from src.config import (
+    AI_MAX_CONCURRENCY,
+    AI_PAGE_DEADLINE_SECONDS,
+    CIRCUIT_BREAKER_THRESHOLD,
+    DECLINE_CODE_BUCKETS,
+    PAGE_SIZE,
+)
 from src.db import get_dsn
 from src.executor import simulate_retry_schedule
 from src.rules import (
@@ -45,7 +51,7 @@ from src.rules import (
 PROGRESS_FILE = pathlib.Path(__file__).resolve().parent.parent / "worker_progress.json"
 
 CIRCUIT_BREAKER_MIN_ERRORS = 5
-_PAGE_AI_DEADLINE = AI_TIMEOUT_SECONDS + 3  # hard cap on a page's whole AI phase
+_PAGE_AI_DEADLINE = AI_PAGE_DEADLINE_SECONDS  # hard cap on a page's whole AI phase
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _ZERO_UUID = "00000000-0000-0000-0000-000000000000"
@@ -243,7 +249,21 @@ def plan_row(row: dict) -> RowPlan:
     )
 
 
-# ── AI enrichment (bounded, concurrent, fallback-safe) ───────────────────────
+# ── AI enrichment (bounded, deduped per scenario, cached, fallback-safe) ──────
+# The model is called once per *scenario*, not per row:
+#   classify -> keyed by decline code
+#   message  -> keyed by (rule_fired, mandate_category)
+# The cache is shared across the whole run, so a 2000-row batch makes ~15 AI calls
+# total. A timeout / error / missing key degrades every row in that scenario to the
+# deterministic fallback and never blocks the pipeline (CLAUDE.md Rules 1 & 2).
+
+
+def _scenario_key(plan: RowPlan) -> tuple:
+    if plan.ai_task == "classify":
+        return ("classify", (plan.ai_context["decline_code"] or "").strip())
+    return ("message", plan.rule_fired, plan.ai_context["mandate_category"])
+
+
 def _merge_ai(plan: RowPlan, res: AIResult, run: WorkerRun) -> None:
     plan.snapshot["ai_status"] = res.status
     if plan.ai_task == "classify":
@@ -258,7 +278,8 @@ def _merge_ai(plan: RowPlan, res: AIResult, run: WorkerRun) -> None:
         # Routing is unchanged: unmapped code stays compliance -> escalated.
     else:  # message
         if res.ok and res.value:
-            plan.snapshot["customer_message"] = res.value
+            amount = f"₹{plan.amount / 100:,.2f}"
+            plan.snapshot["customer_message"] = res.value.replace(AMOUNT_TOKEN, amount)
             plan.snapshot["message_source"] = "ai"
             run.ai_messages += 1
         else:
@@ -267,44 +288,51 @@ def _merge_ai(plan: RowPlan, res: AIResult, run: WorkerRun) -> None:
             run.ai_fallbacks += 1
 
 
-def apply_ai(plans: list[RowPlan], ai: AIClient, run: WorkerRun) -> None:
+def apply_ai(plans: list[RowPlan], ai: AIClient, cache: dict, run: WorkerRun) -> None:
     tasks = [p for p in plans if p.ai_task]
     if not tasks:
         return
 
-    def call(p: RowPlan) -> AIResult:
-        if p.ai_task == "classify":
-            return ai.classify_decline_code(p.ai_context["decline_code"], p.ai_context)
-        return ai.draft_reauth_message(p.ai_context)
+    scenarios: dict[tuple, list[RowPlan]] = {}
+    for p in tasks:
+        scenarios.setdefault(_scenario_key(p), []).append(p)
 
-    # No key -> every call returns instantly; skip the thread pool.
-    if not ai.enabled:
-        for p in tasks:
-            _merge_ai(p, call(p), run)
-        return
+    def fetch(key: tuple, rep: RowPlan) -> AIResult:
+        if key[0] == "classify":
+            return ai.classify_decline_code(rep.ai_context["decline_code"], rep.ai_context)
+        return ai.draft_reauth_message(rep.ai_context)
 
-    # Not a `with` block: we must not wait on stragglers at shutdown. A call that
-    # overruns the page deadline is abandoned here and finishes (or times out on the
-    # SDK's own 8s HTTP cap) harmlessly in the background.
-    ex = ThreadPoolExecutor(max_workers=AI_MAX_CONCURRENCY)
-    futs = {ex.submit(call, p): p for p in tasks}
-    pending = set(futs)
-    try:
-        for fut in as_completed(futs, timeout=_PAGE_AI_DEADLINE):
-            pending.discard(fut)
-            p = futs[fut]
+    missing = {k: v[0] for k, v in scenarios.items() if k not in cache}
+
+    if missing:
+        if not ai.enabled:
+            for key, rep in missing.items():
+                cache[key] = fetch(key, rep)
+        else:
+            # Not a `with` block: we must not wait on stragglers at shutdown.
+            ex = ThreadPoolExecutor(max_workers=AI_MAX_CONCURRENCY)
+            futs = {ex.submit(fetch, k, rep): k for k, rep in missing.items()}
+            pending = set(futs)
             try:
-                res = fut.result()
-            except Exception as exc:  # noqa: BLE001
-                res = AIResult(False, None, f"error:{type(exc).__name__}")
-            _merge_ai(p, res, run)
-    except FuturesTimeout:
-        pass
-    finally:
-        for fut in pending:
-            fut.cancel()
-            _merge_ai(futs[fut], AIResult(False, None, "timeout"), run)
-        ex.shutdown(wait=False, cancel_futures=True)
+                for fut in as_completed(futs, timeout=_PAGE_AI_DEADLINE):
+                    pending.discard(fut)
+                    key = futs[fut]
+                    try:
+                        cache[key] = fut.result()
+                    except Exception as exc:  # noqa: BLE001
+                        cache[key] = AIResult(False, None, f"error:{type(exc).__name__}")
+            except FuturesTimeout:
+                pass
+            finally:
+                for fut in pending:
+                    fut.cancel()
+                    cache[futs[fut]] = AIResult(False, None, "timeout")
+                ex.shutdown(wait=False, cancel_futures=True)
+
+    for key, group in scenarios.items():
+        res = cache[key]
+        for plan in group:
+            _merge_ai(plan, res, run)
 
 
 # ── writing: batched, with a row-by-row fallback ────────────────────────────
@@ -358,9 +386,12 @@ def run(
     max_pages: int | None = None,
     circuit_breaker: bool = True,
     write_progress: bool = True,
+    use_ai: bool = True,
     ai: AIClient | None = None,
 ) -> WorkerRun:
-    ai = ai or AIClient()
+    if ai is None:
+        ai = AIClient() if use_ai else AIClient.disabled()
+    ai_cache: dict = {}
     result = WorkerRun()
     conn = psycopg.connect(get_dsn())
     conn.autocommit = True
@@ -383,7 +414,7 @@ def run(
             cursor_ts, cursor_id = page[-1]["scheduled_at"], page[-1]["transaction_id"]
 
             plans = [plan_row(r) for r in page]
-            apply_ai(plans, ai, result)
+            apply_ai(plans, ai, ai_cache, result)
             by_id = {str(p.transaction_id): p for p in plans}
             errors = write_page(conn, plans)
 

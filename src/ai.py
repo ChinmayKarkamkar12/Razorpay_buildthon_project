@@ -16,12 +16,20 @@ No key (GEMINI_API_KEY unset) => the client is simply `disabled` and every call
 returns a fallback result immediately.
 """
 
+import logging
 import os
 from dataclasses import dataclass
 
-from src.config import AI_TIMEOUT_SECONDS, GEMINI_MODEL
+from src.config import AI_HTTP_TIMEOUT_SECONDS, GEMINI_MODEL
+
+# The SDK logs a noisy "AFC is not recommended" warning on every plain-string call.
+logging.getLogger("google_genai.models").setLevel(logging.ERROR)
 
 VALID_BUCKETS = ("soft", "hard", "technical", "compliance")
+
+# Token the model is told to write where the rupee amount belongs, so one drafted
+# message can be reused for every row in the same (rule, category) scenario.
+AMOUNT_TOKEN = "AMOUNT_INR"
 
 
 @dataclass(frozen=True)
@@ -48,12 +56,12 @@ greeting, no signature) to an Indian customer whose recurring payment could not 
 completed and now needs their manual re-authorisation.
 
 Reason: {reason_hint}
-Amount: about Rs {amount_rupees}
 Service type: {mandate_category}
 
-Be calm and clear. Do not invent transaction IDs, dates, amounts beyond the one \
-given, or phone numbers. Do not promise anything. End by telling them to approve the \
-re-authorisation request in their banking or UPI app."""
+Where the payment amount belongs, write the literal token AMOUNT_INR (uppercase, no \
+number) — it will be filled in later. Be calm and clear. Do not invent transaction \
+IDs, dates, numbers, or phone numbers. Do not promise anything. End by telling them \
+to approve the re-authorisation request in their banking or UPI app."""
 
 _REASON_HINT = {
     "afa_threshold_exceeded": (
@@ -104,7 +112,7 @@ class AIClient:
         api_key: str | None = None,
         *,
         model: str = GEMINI_MODEL,
-        timeout_s: float = AI_TIMEOUT_SECONDS,
+        timeout_s: float = AI_HTTP_TIMEOUT_SECONDS,
     ) -> None:
         self.model = model
         self.timeout_s = timeout_s
@@ -120,6 +128,15 @@ class AIClient:
                 )
             except Exception:  # noqa: BLE001 — never let SDK init break the pipeline
                 self._client = None
+
+    @classmethod
+    def disabled(cls) -> "AIClient":
+        """A client that is deliberately off — every call returns a fallback result."""
+        obj = cls.__new__(cls)
+        obj.model = GEMINI_MODEL
+        obj.timeout_s = 0
+        obj._client = None
+        return obj
 
     @property
     def enabled(self) -> bool:
@@ -157,10 +174,12 @@ class AIClient:
         return AIResult(True, bucket, "ok")
 
     def draft_reauth_message(self, ctx: dict) -> AIResult:
+        """Draft a re-auth message for a (rule_fired, mandate_category) scenario. The
+        result contains the AMOUNT_TOKEN placeholder; the caller fills in the rupee
+        figure per transaction."""
         raw, status = self._try(
             _MESSAGE_PROMPT.format(
                 reason_hint=_REASON_HINT.get(ctx.get("rule_fired"), _DEFAULT_REASON_HINT),
-                amount_rupees=_rupees(ctx["amount"]),
                 mandate_category=ctx["mandate_category"],
             )
         )

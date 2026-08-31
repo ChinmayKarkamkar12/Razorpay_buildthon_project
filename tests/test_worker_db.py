@@ -54,7 +54,7 @@ def _counts(conn):
 
 
 def test_every_transaction_gets_exactly_one_decision_and_one_audit_row(seeded):
-    run(page_size=150, write_progress=False)
+    run(page_size=150, write_progress=False, use_ai=False)
     decisions, audits, pending = _counts(seeded)
     assert decisions == SEED_N
     assert audits == SEED_N
@@ -62,22 +62,22 @@ def test_every_transaction_gets_exactly_one_decision_and_one_audit_row(seeded):
 
 
 def test_rerun_is_a_complete_no_op(seeded):
-    run(page_size=150, write_progress=False)
+    run(page_size=150, write_progress=False, use_ai=False)
     before = _counts(seeded)
-    second = run(page_size=150, write_progress=False)
+    second = run(page_size=150, write_progress=False, use_ai=False)
     assert second.processed == 0
     assert _counts(seeded) == before
 
 
 def test_crash_midway_then_restart_never_duplicates(seeded):
     # process only the first page, as if the worker was killed afterwards
-    partial = run(page_size=100, max_pages=1, write_progress=False)
+    partial = run(page_size=100, max_pages=1, write_progress=False, use_ai=False)
     assert partial.processed == 100
     d1, a1, p1 = _counts(seeded)
     assert d1 == 100 and a1 == 100 and p1 == SEED_N - 100
 
     # restart — must finish the rest with no duplicates
-    rest = run(page_size=100, write_progress=False)
+    rest = run(page_size=100, write_progress=False, use_ai=False)
     assert rest.processed == SEED_N - 100
     d2, a2, p2 = _counts(seeded)
     assert d2 == SEED_N and a2 == SEED_N and p2 == 0
@@ -91,7 +91,7 @@ def test_crash_midway_then_restart_never_duplicates(seeded):
 
 
 def test_recovered_total_matches_sum_of_recovered_amounts(seeded):
-    result = run(page_size=150, write_progress=False)
+    result = run(page_size=150, write_progress=False, use_ai=False)
     with seeded.cursor() as cur:
         cur.execute("SELECT coalesce(sum(amount), 0) FROM transactions WHERE status = 'recovered'")
         db_total = cur.fetchone()[0]
@@ -99,7 +99,7 @@ def test_recovered_total_matches_sum_of_recovered_amounts(seeded):
 
 
 def test_status_and_decision_action_are_consistent(seeded):
-    run(page_size=150, write_progress=False)
+    run(page_size=150, write_progress=False, use_ai=False)
     with seeded.cursor() as cur:
         # a stopped_permanent / reauth decision must leave the txn halted;
         # escalated -> escalated; retry -> recovered or halted
@@ -121,7 +121,7 @@ def test_status_and_decision_action_are_consistent(seeded):
 
 
 def test_no_stopped_decision_is_missing_a_rule(seeded):
-    run(page_size=150, write_progress=False)
+    run(page_size=150, write_progress=False, use_ai=False)
     with seeded.cursor() as cur:
         cur.execute("SELECT count(*) FROM agent_decisions WHERE rule_fired IS NULL OR rule_fired = ''")
         assert cur.fetchone()[0] == 0

@@ -24,15 +24,25 @@ TECHNICAL_RETRY_MINUTES = 60         # engineering default (not sourced)
 # ── Worker / batch processing ──────────────────────────────────────────────────
 PAGE_SIZE = 200                      # worker pagination size (CLAUDE.md Rule 6)
 SEED_CHUNK_SIZE = 500               # seeder inserts in chunks of this many rows
-AI_TIMEOUT_SECONDS = 8
 CIRCUIT_BREAKER_THRESHOLD = 0.20     # pause worker if > 20% of a page errors
 
 # ── AI layer (bounded — see DECISION_RULES.md Step 5 / CLAUDE.md Rule 1) ───────
 # The LLM only (a) drafts customer-facing re-auth messages and (b) SUGGESTS a bucket
 # for a decline code missing from the taxonomy. It never decides an action, never
 # overrides the AFA check or a retry cap. Key comes from GEMINI_API_KEY env only.
-GEMINI_MODEL = "gemini-2.0-flash"
-AI_MAX_CONCURRENCY = 5              # cap on in-flight AI calls per page
+# flash-lite: ~1s/call and fully capable for these two tiny tasks. Plain "flash"
+# averaged 5-20s on the free tier, which is too slow for the batch.
+GEMINI_MODEL = "gemini-flash-lite-latest"
+AI_MAX_CONCURRENCY = 5                  # cap on in-flight AI calls
+
+# DECISION_RULES.md fixes AI_TIMEOUT_SECONDS at 8. Current Gemini endpoints reject an
+# 8s HTTP deadline as "too short", so the 8s intent ("AI must never stall the batch")
+# is enforced at the PIPELINE level: apply_ai abandons anything past the page
+# deadline and falls back. AI_HTTP_TIMEOUT_SECONDS is only a dead-socket backstop.
+AI_TIMEOUT_SECONDS = 8
+AI_HTTP_TIMEOUT_SECONDS = 30
+AI_PAGE_DEADLINE_SECONDS = 40           # hard cap on one page's whole AI phase
+                                       # (only page 1 pays it — scenarios are cached)
 
 # ── Mock PSP retry outcome (simulation only — NOT a real payment rail) ─────────
 # Per-attempt probability that a scheduled retry succeeds at the mock gateway.
