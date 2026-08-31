@@ -105,6 +105,18 @@ class CircuitBreakerTripped(RuntimeError):
     through a bad batch (DECISION_RULES.md Step 4)."""
 
 
+def _circuit_tripped(page_errors: int, page_len: int) -> bool:
+    """Page-level safety valve (steps/05_stopping_rules.md): stop the whole worker
+    when a page failed badly enough that continuing risks corrupting a lot of data —
+    more than CIRCUIT_BREAKER_THRESHOLD of the page errored, with a
+    CIRCUIT_BREAKER_MIN_ERRORS floor so a tiny page can't trip on one unlucky row."""
+    return (
+        page_len > 0
+        and page_errors >= CIRCUIT_BREAKER_MIN_ERRORS
+        and page_errors / page_len > CIRCUIT_BREAKER_THRESHOLD
+    )
+
+
 @dataclass
 class WorkerRun:
     pages: int = 0
@@ -444,11 +456,7 @@ def run(
                 _write_progress(result, total_pages, running=True)
 
             page_errors = len(errors)
-            if (
-                circuit_breaker
-                and page_errors >= CIRCUIT_BREAKER_MIN_ERRORS
-                and page_errors / len(page) > CIRCUIT_BREAKER_THRESHOLD
-            ):
+            if circuit_breaker and _circuit_tripped(page_errors, len(page)):
                 if write_progress:
                     _write_progress(result, total_pages, running=False)
                 raise CircuitBreakerTripped(

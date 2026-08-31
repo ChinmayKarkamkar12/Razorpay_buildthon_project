@@ -125,3 +125,51 @@ def test_no_stopped_decision_is_missing_a_rule(seeded):
     with seeded.cursor() as cur:
         cur.execute("SELECT count(*) FROM agent_decisions WHERE rule_fired IS NULL OR rule_fired = ''")
         assert cur.fetchone()[0] == 0
+
+
+# ── step 5: stopping rules are traceable + the circuit breaker works ─────────
+def test_every_stopped_permanent_decision_has_a_rule_and_an_audit_row(seeded):
+    run(page_size=150, write_progress=False, use_ai=False)
+    with seeded.cursor() as cur:
+        cur.execute("SELECT count(*) FROM agent_decisions WHERE action_taken = 'stopped_permanent'")
+        assert cur.fetchone()[0] > 0  # the seed actually produces some
+        cur.execute(
+            """
+            SELECT count(*) FROM agent_decisions ad
+            WHERE ad.action_taken = 'stopped_permanent'
+              AND (
+                ad.rule_fired IS NULL OR ad.rule_fired = ''
+                OR NOT EXISTS (
+                    SELECT 1 FROM audit_log al
+                    WHERE al.transaction_id = ad.transaction_id
+                      AND al.event_type = 'agent_decision'
+                )
+              )
+            """
+        )
+        assert cur.fetchone()[0] == 0
+
+
+def _quarter_of_every_page_fails(conn, plans):
+    n = len(plans) // 4 + 1  # ~25% -> over the 20% threshold and past the error floor
+    return {str(p.transaction_id): RuntimeError("forced bad row") for p in plans[:n]}
+
+
+def test_circuit_breaker_stops_the_worker_on_a_bad_page(seeded, monkeypatch):
+    from src import worker
+
+    monkeypatch.setattr(worker, "write_page", _quarter_of_every_page_fails)
+    with pytest.raises(worker.CircuitBreakerTripped):
+        run(page_size=150, write_progress=False, use_ai=False)
+
+    # nothing was committed on the aborted page
+    decisions, _, pending = _counts(seeded)
+    assert decisions == 0 and pending == SEED_N
+
+
+def test_circuit_breaker_can_be_switched_off(seeded, monkeypatch):
+    from src import worker
+
+    monkeypatch.setattr(worker, "write_page", _quarter_of_every_page_fails)
+    result = run(page_size=150, circuit_breaker=False, write_progress=False, use_ai=False)
+    assert result.errors > 0  # errors were recorded, but the run ran to completion
