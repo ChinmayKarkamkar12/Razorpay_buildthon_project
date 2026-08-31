@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Transactions{% endblock %}
+{% block body %}
+  <h2>Transactions <span class="muted">({{ total }})</span></h2>
+
+  <div class="filters">
+    {% set current = status or '' %}
+    <a href="/transactions" class="{{ 'active' if not current }}">all</a>
+    {% for s in ['recovered', 'halted', 'escalated', 'pending'] %}
+      <a href="/transactions?status={{ s }}" class="{{ 'active' if current == s }}">{{ s }}</a>
+    {% endfor %}
+  </div>
+
+  <table>
+    <thead><tr>
+      <th>Transaction</th><th>Amount</th><th>Category</th><th>Decline</th>
+      <th>Action</th><th>Status</th>
+    </tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a class="row-link" href="/transactions/{{ r.transaction_id }}">{{ r.transaction_id[:8] }}&hellip;</a></td>
+        <td>&#8377;{{ "{:,.2f}".format(r.amount_rupees) }}</td>
+        <td>{{ r.mandate_category }}</td>
+        <td>{{ r.decline_code or '—' }}</td>
+        <td>{{ r.action_taken or '—' }}</td>
+        <td><span class="pill s-{{ r.status }}">{{ r.status }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No transactions.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="pager">
+    {% set qs = ('&status=' ~ status) if status else '' %}
+    {% if has_prev %}<a href="/transactions?page={{ page - 1 }}{{ qs }}">&larr; Prev</a>{% endif %}
+    <span class="muted">Page {{ page }} of {{ total_pages }}</span>
+    {% if has_next %}<a href="/transactions?page={{ page + 1 }}{{ qs }}">Next &rarr;</a>{% endif %}
+  </div>
+{% endblock %}

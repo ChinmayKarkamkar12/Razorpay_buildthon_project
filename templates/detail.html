@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Transaction {{ transaction.transaction_id[:8] }}{% endblock %}
+{% block body %}
+  <p><a class="row-link" href="/transactions">&larr; All transactions</a></p>
+  <h2>Transaction {{ transaction.transaction_id[:8] }}&hellip;</h2>
+
+  <div class="grid">
+    <div class="card"><div class="n">&#8377;{{ "{:,.2f}".format(transaction.amount_rupees) }}</div><div class="k">Amount</div></div>
+    <div class="card"><div class="n" style="font-size:18px">{{ transaction.mandate_category }}</div><div class="k">Mandate</div></div>
+    <div class="card"><div class="n" style="font-size:18px">{{ transaction.attempt_count }}</div><div class="k">Attempts</div></div>
+    <div class="card"><div class="n" style="font-size:18px"><span class="pill s-{{ transaction.status }}">{{ transaction.status }}</span></div><div class="k">Status</div></div>
+  </div>
+
+  <h3 style="margin-top:28px">What the agent did, and why</h3>
+  {% if story %}
+    <ol class="story">
+      {% for line in story %}<li>{{ line }}</li>{% endfor %}
+    </ol>
+  {% else %}
+    <p class="muted">No decision recorded for this transaction yet.</p>
+  {% endif %}
+
+  <h3 style="margin-top:28px">Timeline</h3>
+  <table>
+    <thead><tr><th>When</th><th>Event</th><th>Detail</th></tr></thead>
+    <tbody>
+      {% for d in declines %}
+      <tr><td>{{ d.occurred_at }}</td><td>Payment declined</td>
+          <td>code <strong>{{ d.decline_code }}</strong> &rarr; {{ d.bucket }} bucket</td></tr>
+      {% endfor %}
+      {% if decision %}
+      <tr><td>{{ decision.decided_at }}</td><td>Agent decision</td>
+          <td>rule <strong>{{ decision.rule_fired }}</strong> &rarr; {{ decision.action_taken }}
+              <span class="muted">({{ decision.reasoning_source }})</span>
+              {% if decision.next_action_at %}<br>next attempt: {{ decision.next_action_at }}{% endif %}
+          </td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+  {% if audit %}
+  <h3 style="margin-top:28px">Raw audit snapshot <span class="muted">(append-only log)</span></h3>
+  {% for a in audit %}
+    <p class="muted">{{ a.event_type }} · {{ a.created_at }}</p>
+    <pre>{{ a.payload_snapshot | tojson(indent=2) }}</pre>
+  {% endfor %}
+  {% endif %}
+{% endblock %}

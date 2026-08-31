@@ -26,6 +26,10 @@ PAGE_SIZE = 200                      # worker pagination size (CLAUDE.md Rule 6)
 SEED_CHUNK_SIZE = 500               # seeder inserts in chunks of this many rows
 CIRCUIT_BREAKER_THRESHOLD = 0.20     # pause worker if > 20% of a page errors
 
+# ── Dashboard (Step 6 — read-only demo view) ───────────────────────────────────
+DASHBOARD_PAGE_SIZE = 25             # rows per page in the dashboard transactions table
+DASHBOARD_SUMMARY_TTL_SECONDS = 3    # cache the summary numbers this long between recomputes
+
 # ── AI layer (bounded — see DECISION_RULES.md Step 5 / CLAUDE.md Rule 1) ───────
 # The LLM only (a) drafts customer-facing re-auth messages and (b) SUGGESTS a bucket
 # for a decline code missing from the taxonomy. It never decides an action, never

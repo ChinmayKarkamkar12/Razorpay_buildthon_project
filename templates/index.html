@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block body %}
+  <h2>Batch summary</h2>
+
+  {% if progress %}
+  <div class="card" style="margin-bottom:16px">
+    <div class="k">Worker progress</div>
+    <div id="prog-label">{{ progress.label }}
+      {% if progress.running %}<span class="muted">· running</span>
+      {% else %}<span class="muted">· idle</span>{% endif %}
+    </div>
+    <div class="progress-wrap"><div class="progress-bar" id="prog-bar"
+         style="width: {{ progress.pct }}%"></div></div>
+  </div>
+  {% endif %}
+
+  <div class="grid" id="cards">
+    <div class="card"><div class="n" data-k="total">{{ summary.total }}</div><div class="k">Processed</div></div>
+    <div class="card"><div class="n" data-k="recovered">{{ summary.recovered }}</div><div class="k">Recovered</div></div>
+    <div class="card"><div class="n" data-k="halted">{{ summary.halted }}</div><div class="k">Halted</div></div>
+    <div class="card"><div class="n" data-k="escalated">{{ summary.escalated }}</div><div class="k">Escalated</div></div>
+    <div class="card"><div class="n" data-k="pending">{{ summary.pending }}</div><div class="k">Pending</div></div>
+    <div class="card"><div class="n" data-k="recovered_rupees">&#8377;{{ "{:,.0f}".format(summary.recovered_rupees) }}</div><div class="k">Value recovered</div></div>
+  </div>
+
+  <h3 style="margin-top:28px">Failures by bucket</h3>
+  <div class="grid">
+    {% for name, n in summary.buckets.items() %}
+    <div class="card"><div class="n">{{ n }}</div><div class="k">{{ name }}</div></div>
+    {% endfor %}
+  </div>
+
+  <p style="margin-top:24px"><a class="row-link" href="/transactions">Browse all transactions &rarr;</a></p>
+
+  <script>
+    async function refresh() {
+      try {
+        const r = await fetch('/api/summary'); if (!r.ok) return;
+        const { summary, progress } = await r.json();
+        for (const el of document.querySelectorAll('#cards .n')) {
+          const k = el.dataset.k;
+          if (k === 'recovered_rupees')
+            el.textContent = '₹' + Math.round(summary[k]).toLocaleString();
+          else el.textContent = summary[k];
+        }
+        if (progress) {
+          const bar = document.getElementById('prog-bar');
+          const lbl = document.getElementById('prog-label');
+          if (bar) bar.style.width = progress.pct + '%';
+          if (lbl) lbl.textContent = progress.label + (progress.running ? '  · running' : '  · idle');
+        }
+      } catch (e) {}
+    }
+    setInterval(refresh, 3000);
+  </script>
+{% endblock %}
