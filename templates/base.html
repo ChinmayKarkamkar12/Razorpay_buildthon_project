@@ -37,6 +37,16 @@
     .filters a.active { background:var(--info); color:#0b0d10; border-color:var(--info); }
     .story li { margin:6px 0; }
     .muted { color:var(--mut); }
+    .substatus { color:var(--mut); font-size:12.5px; margin-top:4px; }
+    .callout { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--info);
+               border-radius:0 10px 10px 0; padding:12px 16px; }
+    abbr[title] { text-decoration:underline dotted; text-decoration-color:var(--mut);
+                  cursor:help; }
+    details { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 16px; }
+    details[open] { padding-bottom:16px; }
+    details summary { cursor:pointer; }
+    details summary::marker { color:var(--mut); }
+    details table { margin-top:12px; }
     .progress-wrap { height:8px; background:var(--line); border-radius:999px; overflow:hidden; margin-top:6px; }
     .progress-bar { height:100%; background:var(--info); width:0; transition:width .4s; }
     pre { background:#0b0d10; border:1px solid var(--line); padding:12px; border-radius:8px;

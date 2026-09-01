@@ -268,9 +268,8 @@ def humanize_decision(snapshot: dict) -> list[str]:
         }.get(src, src)
         lines.append(f"Decision was made by {label}.")
 
-    msg = s.get("customer_message")
-    if msg:
-        lines.append(f'Customer message ({s.get("message_source", "n/a")}): "{msg}"')
+    # Note: the actual customer_message text is surfaced separately as its own
+    # callout on the detail page (see get_transaction_detail), not repeated here.
 
     return lines
 
@@ -289,10 +288,28 @@ def get_transaction_detail(transaction_id: str) -> dict | None:
     decision_snapshot = next(
         (a["payload_snapshot"] for a in audit if a["event_type"] == "agent_decision"), None
     )
+    action_plain = None
+    if decision and decision.get("action_taken"):
+        action_plain = _ACTION_PLAIN.get(decision["action_taken"], decision["action_taken"])
+
+    customer_message = None
+    if decision_snapshot and decision_snapshot.get("customer_message"):
+        customer_message = {
+            "text": decision_snapshot["customer_message"],
+            "source": decision_snapshot.get("message_source", "n/a"),
+        }
+
     return {
         "transaction": txn,
         "decision": decision,
         "declines": declines,
         "audit": audit,
         "story": humanize_decision(decision_snapshot) if decision_snapshot else [],
+        # Plain-English one-liner for the subtitle under the status pill — e.g.
+        # "Sent the customer a re-authorisation link." Judges/support agents read
+        # this before they read the full narrative below.
+        "action_plain": action_plain,
+        # The actual outbound customer message, pulled out of the narrative so it
+        # can be shown as its own callout instead of buried in a list of sentences.
+        "customer_message": customer_message,
     }

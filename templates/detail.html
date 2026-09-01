@@ -6,12 +6,27 @@
 
   <div class="grid">
     <div class="card"><div class="n">&#8377;{{ "{:,.2f}".format(transaction.amount_rupees) }}</div><div class="k">Amount</div></div>
-    <div class="card"><div class="n" style="font-size:18px">{{ transaction.mandate_category }}</div><div class="k">Mandate</div></div>
-    <div class="card"><div class="n" style="font-size:18px">{{ transaction.attempt_count }}</div><div class="k">Attempts</div></div>
-    <div class="card"><div class="n" style="font-size:18px"><span class="pill s-{{ transaction.status }}">{{ transaction.status }}</span></div><div class="k">Status</div></div>
+    <div class="card"><div class="n" style="font-size:18px">{{ transaction.mandate_category }}</div><div class="k">Mandate type</div></div>
+    <div class="card"><div class="n" style="font-size:18px">{{ transaction.attempt_count }}</div><div class="k">Retry attempts</div></div>
+    <div class="card">
+      <div class="n" style="font-size:18px"><span class="pill s-{{ transaction.status }}">{{ transaction.status }}</span></div>
+      <div class="k">Status</div>
+      {% if action_plain %}<div class="substatus">{{ action_plain }}.</div>{% endif %}
+    </div>
   </div>
 
+  {% if customer_message %}
+  <div class="callout" style="margin-top:20px">
+    <div class="k" style="margin-bottom:6px">What the customer actually received
+      <span class="muted">&middot; via {{ customer_message.source }}</span></div>
+    <p style="margin:0; font-style:italic">&ldquo;{{ customer_message.text }}&rdquo;</p>
+  </div>
+  {% endif %}
+
   <h3 style="margin-top:28px">What the agent did, and why</h3>
+  <p class="muted" style="margin-top:-6px">
+    Reconstructed automatically from the audit log below &mdash; not written by a person.
+  </p>
   {% if story %}
     <ol class="story">
       {% for line in story %}<li>{{ line }}</li>{% endfor %}
@@ -20,29 +35,41 @@
     <p class="muted">No decision recorded for this transaction yet.</p>
   {% endif %}
 
-  <h3 style="margin-top:28px">Timeline</h3>
-  <table>
-    <thead><tr><th>When</th><th>Event</th><th>Detail</th></tr></thead>
-    <tbody>
-      {% for d in declines %}
-      <tr><td>{{ d.occurred_at }}</td><td>Payment declined</td>
-          <td>code <strong>{{ d.decline_code }}</strong> &rarr; {{ d.bucket }} bucket</td></tr>
-      {% endfor %}
-      {% if decision %}
-      <tr><td>{{ decision.decided_at }}</td><td>Agent decision</td>
-          <td>rule <strong>{{ decision.rule_fired }}</strong> &rarr; {{ decision.action_taken }}
-              <span class="muted">({{ decision.reasoning_source }})</span>
-              {% if decision.next_action_at %}<br>next attempt: {{ decision.next_action_at }}{% endif %}
-          </td></tr>
-      {% endif %}
-    </tbody>
-  </table>
+  <p class="muted" style="font-size:13px">
+    Glossary:
+    <abbr title="Additional Factor Authentication — RBI requires the customer to actively re-approve any recurring auto-debit above a set amount; the system cannot charge it silently.">AFA</abbr> &middot;
+    <abbr title="'Hard' means the bank refused the payment for a reason retrying won't fix (blocked card, wrong PIN, invalid account) — RBI rules forbid auto-retrying these.">hard decline</abbr> &middot;
+    <abbr title="'Soft' means a temporary issue like insufficient funds — these are safe to retry on RBI's T+1 / T+2 / T+3 schedule.">soft decline</abbr> &middot;
+    <abbr title="The category a decline code is sorted into (hard / soft / technical / compliance), which determines what the agent is allowed to do next.">bucket</abbr>
+  </p>
+
+  <details style="margin-top:28px">
+    <summary><strong>Timeline</strong> <span class="muted">&mdash; same story above, as a structured event log</span></summary>
+    <table>
+      <thead><tr><th>When</th><th>Event</th><th>Detail</th></tr></thead>
+      <tbody>
+        {% for d in declines %}
+        <tr><td>{{ d.occurred_at }}</td><td>Payment declined</td>
+            <td>code <strong>{{ d.decline_code }}</strong> &rarr; {{ d.bucket }} bucket</td></tr>
+        {% endfor %}
+        {% if decision %}
+        <tr><td>{{ decision.decided_at }}</td><td>Agent decision</td>
+            <td>rule <strong>{{ decision.rule_fired }}</strong> &rarr; {{ decision.action_taken }}
+                <span class="muted">({{ decision.reasoning_source }})</span>
+                {% if decision.next_action_at %}<br>next attempt: {{ decision.next_action_at }}{% endif %}
+            </td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </details>
 
   {% if audit %}
-  <h3 style="margin-top:28px">Raw audit snapshot <span class="muted">(append-only log)</span></h3>
-  {% for a in audit %}
-    <p class="muted">{{ a.event_type }} · {{ a.created_at }}</p>
-    <pre>{{ a.payload_snapshot | tojson(indent=2) }}</pre>
-  {% endfor %}
+  <details style="margin-top:20px">
+    <summary><strong>Raw audit snapshot</strong> <span class="muted">&mdash; append-only log, for compliance verification</span></summary>
+    {% for a in audit %}
+      <p class="muted">{{ a.event_type }} · {{ a.created_at }}</p>
+      <pre>{{ a.payload_snapshot | tojson(indent=2) }}</pre>
+    {% endfor %}
+  </details>
   {% endif %}
 {% endblock %}
