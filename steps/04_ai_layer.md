@@ -29,7 +29,7 @@ unmapped codes — without ever letting it make the actual retry/stop decision.
       would otherwise fall through to the unmapped/default case. The AI's suggested
       bucket can be logged for reference, but for this hackathon, treat the actual
       routing decision as `compliance` regardless of what the AI suggests
-      (per `CLAUDE.md` Rule 2 — fail toward caution). Log `reasoning_source =
+      (per `PRINCIPLES.md` Rule 2 — fail toward caution). Log `reasoning_source =
       "ai_classifier"` if you use its suggestion for anything user-facing, or
       `"ai_fallback"` if the call failed and you used the default.
 - [ ] Wrap every AI call with an 8-second timeout.

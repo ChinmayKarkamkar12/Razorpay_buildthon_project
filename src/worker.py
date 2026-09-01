@@ -4,11 +4,11 @@ Pulls pages of `pending` transactions (keyset pagination on the
 idx_transactions_status_scheduled index), runs the deterministic rule engine, adds
 bounded AI enrichment where allowed (re-auth message text, unmapped-code bucket
 suggestion), mock-executes the resulting action, and writes — per row — the decision
-+ an audit row + the status update as ONE atomic statement (CLAUDE.md Rules 4, 6, 7).
++ an audit row + the status update as ONE atomic statement (PRINCIPLES.md Rules 4, 6, 7).
 
-The AI never changes the routing decision (CLAUDE.md Rule 1). A timeout / error /
+The AI never changes the routing decision (PRINCIPLES.md Rule 1). A timeout / error /
 missing key degrades to the conservative fallback, recorded in the audit snapshot;
-the pipeline never hangs on it (CLAUDE.md Rule 2).
+the pipeline never hangs on it (PRINCIPLES.md Rule 2).
 
 Atomicity + idempotency: each row's three writes are one CTE statement. The decision
 insert is `ON CONFLICT (transaction_id) DO NOTHING`; the audit insert and status
@@ -267,7 +267,7 @@ def plan_row(row: dict) -> RowPlan:
 #   message  -> keyed by (rule_fired, mandate_category)
 # The cache is shared across the whole run, so a 2000-row batch makes ~15 AI calls
 # total. A timeout / error / missing key degrades every row in that scenario to the
-# deterministic fallback and never blocks the pipeline (CLAUDE.md Rules 1 & 2).
+# deterministic fallback and never blocks the pipeline (PRINCIPLES.md Rules 1 & 2).
 
 
 def _scenario_key(plan: RowPlan) -> tuple:

@@ -3,7 +3,7 @@
 Pure-ish query helpers for the Flask app in `app.py`. Every query is bounded:
 the summary is a handful of aggregates cached on a short interval, the transactions
 list is always `LIMIT`ed, and the detail view is keyed by a single id. Nothing here
-writes (CLAUDE.md: the dashboard is read-only).
+writes (PRINCIPLES.md: the dashboard is read-only).
 
 `humanize_decision()` turns an `audit_log` snapshot into plain-language lines — the
 "prove it" view for judges — and is a pure function with no DB, so it is unit-tested

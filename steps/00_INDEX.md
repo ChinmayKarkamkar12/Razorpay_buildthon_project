@@ -19,5 +19,5 @@ to read for that step. This keeps context small and cheap per session.
 | 7 | `07_load_test.md` | everything built so far |
 | 8 | `08_pitch_prep.md` | none — just prep, no coding |
 
-`CLAUDE.md` (in the project root) applies to every step automatically — don't repeat
-those rules per file, Claude Code reads it once per session.
+`PRINCIPLES.md` (in the project root) applies to every step — don't repeat those rules
+per file.

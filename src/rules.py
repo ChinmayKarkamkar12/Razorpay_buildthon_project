@@ -1,7 +1,7 @@
 """Deterministic policy engine — the compliance-critical core.
 
 Implements DECISION_RULES.md directly as PURE functions: same input always yields the
-same output, no database, no network, no AI, no clock reads. This is what CLAUDE.md
+same output, no database, no network, no AI, no clock reads. This is what PRINCIPLES.md
 Rule 1 means by "deterministic rules before AI, always" — nothing in here may ever be
 replaced by an LLM call.
 
@@ -50,7 +50,7 @@ class RuleDecision:
 def classify(decline_code: str | None) -> str:
     """Map a decline code to its bucket. Any code not in the hardcoded taxonomy
     returns the most conservative bucket ('compliance') — never an error, never a
-    guess (CLAUDE.md Rule 2)."""
+    guess (PRINCIPLES.md Rule 2)."""
     if not decline_code:
         return CONSERVATIVE_BUCKET
     return DECLINE_CODE_BUCKETS.get(decline_code.strip(), CONSERVATIVE_BUCKET)
@@ -69,7 +69,7 @@ def is_mandate_issue(decline_code: str | None) -> bool:
 # ── Step 2 — AFA threshold check (independent of, and prior to, the bucket) ─────
 def check_afa_threshold(amount: int, mandate_category: str) -> str:
     """Amount STRICTLY ABOVE the category's AFA-free limit requires re-authentication.
-    Exactly at the limit does not. `amount` is integer paise (CLAUDE.md Rule 3)."""
+    Exactly at the limit does not. `amount` is integer paise (PRINCIPLES.md Rule 3)."""
     if not isinstance(amount, int):
         raise TypeError(f"amount must be int paise, got {type(amount).__name__}")
     limit = afa_free_limit_for(mandate_category)

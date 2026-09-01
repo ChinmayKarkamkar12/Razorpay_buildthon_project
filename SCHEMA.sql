@@ -1,6 +1,6 @@
 -- RBI E-Mandate & UPI Recovery Coordinator — Schema
 -- Postgres (Supabase / Neon free tier)
--- Money is ALWAYS integer paise. Never float. See CLAUDE.md Rule 3.
+-- Money is ALWAYS integer paise. Never float. See PRINCIPLES.md Rule 3.
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- for gen_random_uuid()
 
@@ -76,7 +76,7 @@ CREATE TABLE agent_decisions (
     transaction_id    UUID NOT NULL UNIQUE REFERENCES transactions(transaction_id),
                                                   -- UNIQUE: one terminal decision per
                                                   -- transaction. DB-enforced idempotency
-                                                  -- guard for the worker (CLAUDE.md Rule 4).
+                                                  -- guard for the worker (PRINCIPLES.md Rule 4).
     rule_fired        TEXT NOT NULL,               -- e.g. 'afa_threshold_exceeded'
     action_taken      agent_action NOT NULL,
     reasoning_source  reasoning_source NOT NULL,

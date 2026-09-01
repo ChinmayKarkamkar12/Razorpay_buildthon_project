@@ -1,16 +1,16 @@
 """Bounded AI layer (Google Gemini, free tier).
 
-Per CLAUDE.md Rule 1 and DECISION_RULES.md Step 5 the LLM is allowed exactly two jobs:
+Per PRINCIPLES.md Rule 1 and DECISION_RULES.md Step 5 the LLM is allowed exactly two jobs:
 
   1. draft_reauth_message() — write the customer-facing text for a re-auth link.
      Pure text. It never influences which action was chosen.
   2. classify_decline_code() — SUGGEST a bucket for a code missing from the
      hardcoded taxonomy. The suggestion is logged; routing still treats the row as
-     'compliance' no matter what the model says (CLAUDE.md Rule 2).
+     'compliance' no matter what the model says (PRINCIPLES.md Rule 2).
 
 Every call is time-boxed. Any timeout / error / unparseable reply degrades to the
 conservative fallback and is reported as such — the pipeline never hangs or crashes
-because of the AI (CLAUDE.md Rule 2, DECISION_RULES.md Step 4).
+because of the AI (PRINCIPLES.md Rule 2, DECISION_RULES.md Step 4).
 
 No key (GEMINI_API_KEY unset) => the client is simply `disabled` and every call
 returns a fallback result immediately.

@@ -1,7 +1,7 @@
 # Decision Rules — Policy Engine Spec
 
 This is the canonical source of truth for the agent's decision logic. Implement this
-as plain, unit-testable code — **not** as an LLM prompt. See `CLAUDE.md` Rule 1.
+as plain, unit-testable code — **not** as an LLM prompt. See `PRINCIPLES.md` Rule 1.
 
 ## Constants (single config module — no magic numbers elsewhere)
 
@@ -44,7 +44,7 @@ verified official NPCI codes (public sources disagree; see note below).
 | U01, U69, ZE, U66 | hard | invalid VPA / expired collect / permission / device — stop |
 | U30, U28, U67, XH (bank unavailable), YB, M0 | technical | quick retry within `TECHNICAL_RETRY_MINUTES` |
 | V3, AFA_required, mandate_cancelled, mandate_expired | compliance | never auto-retry — trigger re-auth or re-registration |
-| *(any unmapped code)* | compliance | **default to most conservative bucket** — see CLAUDE.md Rule 2 |
+| *(any unmapped code)* | compliance | **default to most conservative bucket** — see PRINCIPLES.md Rule 2 |
 
 > Note for the pitch: NPCI's full Operating Circulars aren't publicly available; this
 > taxonomy is built from documented PSP integration guides. State this openly — it's
@@ -114,7 +114,7 @@ function decide_action(bucket, afa_check, attempt_count):
 - Circuit breaker: if more than 20% of a page (see `PAGE_SIZE`) errors unexpectedly
   during processing, pause the worker and surface an alert rather than continuing.
 
-## Step 5 — Where AI is allowed (bounded, per CLAUDE.md Rule 1)
+## Step 5 — Where AI is allowed (bounded, per PRINCIPLES.md Rule 1)
 
 1. **Drafting the customer-facing re-auth/retry message** — tone and wording only.
    Never decides the action itself.

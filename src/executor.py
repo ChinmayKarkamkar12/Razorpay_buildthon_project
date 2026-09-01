@@ -1,10 +1,10 @@
 """Mock action executor.
 
 This stands in for the real payment rail. NOTHING here touches a live gateway
-(CLAUDE.md Rule 8). It only simulates what a PSP would return for a scheduled retry,
+(PRINCIPLES.md Rule 8). It only simulates what a PSP would return for a scheduled retry,
 so the pipeline and dashboard have a realistic recovered-vs-halted split to show.
 
-The rule engine's DECISION is deterministic (CLAUDE.md Rule 1). Only the simulated
+The rule engine's DECISION is deterministic (PRINCIPLES.md Rule 1). Only the simulated
 bank response is randomised — and even that is seeded from the transaction id, so a
 given batch always produces the same numbers.
 """

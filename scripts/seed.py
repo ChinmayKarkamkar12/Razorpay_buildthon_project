@@ -8,7 +8,7 @@ Usage:
     python -m scripts.seed --transactions 12000  # bigger batch (step 7 load test)
     python -m scripts.seed --reset               # wipe all tables first, then seed
 
-All data is synthetic (CLAUDE.md Rule 8). Money is integer paise (Rule 3).
+All data is synthetic (PRINCIPLES.md Rule 8). Money is integer paise (Rule 3).
 
 ────────────────────────────────────────────────────────────────────────────────
 CHOSEN SYNTHETIC DISTRIBUTIONS  (reasoned estimates, NOT official published stats —

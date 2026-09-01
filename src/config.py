@@ -1,10 +1,10 @@
 """Canonical configuration — the single source of truth for every hardcoded limit.
 
-Per CLAUDE.md Rule 9 (explicit over implicit): retry caps, AFA thresholds, page size
+Per PRINCIPLES.md Rule 9 (explicit over implicit): retry caps, AFA thresholds, page size
 and timeouts live here and nowhere else. Values are copied verbatim from
 DECISION_RULES.md — do not change them here without changing that doc.
 
-Money is ALWAYS integer paise (CLAUDE.md Rule 3).
+Money is ALWAYS integer paise (PRINCIPLES.md Rule 3).
 """
 
 # ── AFA-free thresholds (RBI e-mandate additional factor of authentication) ──────
@@ -22,7 +22,7 @@ RETRY_SCHEDULE_DAYS = (1, 2, 3)       # soft declines: retry on these day offset
 TECHNICAL_RETRY_MINUTES = 60         # engineering default (not sourced)
 
 # ── Worker / batch processing ──────────────────────────────────────────────────
-PAGE_SIZE = 200                      # worker pagination size (CLAUDE.md Rule 6)
+PAGE_SIZE = 200                      # worker pagination size (PRINCIPLES.md Rule 6)
 SEED_CHUNK_SIZE = 500               # seeder inserts in chunks of this many rows
 CIRCUIT_BREAKER_THRESHOLD = 0.20     # pause worker if > 20% of a page errors
 
@@ -30,7 +30,7 @@ CIRCUIT_BREAKER_THRESHOLD = 0.20     # pause worker if > 20% of a page errors
 DASHBOARD_PAGE_SIZE = 25             # rows per page in the dashboard transactions table
 DASHBOARD_SUMMARY_TTL_SECONDS = 3    # cache the summary numbers this long between recomputes
 
-# ── AI layer (bounded — see DECISION_RULES.md Step 5 / CLAUDE.md Rule 1) ───────
+# ── AI layer (bounded — see DECISION_RULES.md Step 5 / PRINCIPLES.md Rule 1) ───────
 # The LLM only (a) drafts customer-facing re-auth messages and (b) SUGGESTS a bucket
 # for a decline code missing from the taxonomy. It never decides an action, never
 # overrides the AFA check or a retry cap. Key comes from GEMINI_API_KEY env only.
@@ -58,7 +58,7 @@ RETRY_SUCCESS_PROB = {"soft": 0.35, "technical": 0.65}
 # ── Decline code -> bucket taxonomy ────────────────────────────────────────────
 # Modeled on documented PSP/NPCI integration guides (NPCI's full circular is not
 # public). Any code NOT in this table maps to the most conservative bucket,
-# 'compliance' (CLAUDE.md Rule 2 — fail toward caution).
+# 'compliance' (PRINCIPLES.md Rule 2 — fail toward caution).
 DECLINE_CODE_BUCKETS = {
     # soft — genuine business decline, retry on schedule
     "Z9": "soft",     # insufficient funds

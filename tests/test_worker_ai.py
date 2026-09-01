@@ -2,7 +2,7 @@
 
 Proves the two allowed AI jobs work, that calls are deduped per scenario and cached
 across pages, and that a slow / failing / absent model never changes the routing
-decision and never blocks the page (CLAUDE.md Rules 1 & 2).
+decision and never blocks the page (PRINCIPLES.md Rules 1 & 2).
 """
 
 import time
