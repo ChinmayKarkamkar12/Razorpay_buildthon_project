@@ -271,7 +271,25 @@ what the agent actually does.
 
 ---
 
-## 12. What we'd revisit if this became real
+## 12. What broke during the build
+
+The honest version is in [`ENGINEERING_JOURNAL.md`](ENGINEERING_JOURNAL.md) — seven
+incidents, each as symptom → diagnosis → fix. The ones worth mentioning in the pitch:
+
+- **Gemini `flash` was too slow** (5–20 s/call on the free tier) to sit inside a
+  batch → switched to `flash-lite`, ~1 s/call, no quality loss on these two tiny tasks.
+- **Gemini rejected an 8-second HTTP timeout** as too short → enforced the "AI never
+  stalls the batch" rule one layer up, at the page level (deadline + future cancel),
+  not on the socket.
+- **One AI call per row would have blown the quota** and made page 1 stall → dedupe
+  rows to ~15 distinct *scenarios* per run and cache the results run-wide.
+- **A worker restart mid-batch could double-count recovered money** → pushed
+  idempotency into the DB (`UNIQUE` + `ON CONFLICT DO NOTHING` in a single CTE);
+  re-running a finished batch is now a provable no-op.
+
+---
+
+## 13. What we'd revisit if this became real
 
 - Replace the polling worker with a real event queue (SQS / Kafka).
 - Cryptographically chained append-only audit log.
@@ -281,12 +299,13 @@ what the agent actually does.
 
 ---
 
-## 13. Further reading
+## 14. Further reading
 
 | File | What's in it |
 |---|---|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Full ADR — context, requirements, high-level design, data flow, trade-off analysis |
 | [`DECISION_RULES.md`](DECISION_RULES.md) | The canonical policy engine spec with worked pseudocode and the minimum test set |
+| [`ENGINEERING_JOURNAL.md`](ENGINEERING_JOURNAL.md) | What broke during the build and how each issue was fixed |
 | [`PRINCIPLES.md`](PRINCIPLES.md) | The 10 non-negotiable project rules and the definition of done |
 | [`SCHEMA.sql`](SCHEMA.sql) | Postgres DDL with inline notes on why each constraint exists |
 | [`steps/00_INDEX.md`](steps/00_INDEX.md) | The 8-step build plan |
